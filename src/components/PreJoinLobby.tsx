@@ -6,6 +6,7 @@ import { ArrowRight, Copy, Mic, MicOff, Video, VideoOff } from "lucide-react";
 import { AppHeader } from "@/components/ui/AppHeader";
 import type { useLocalMedia } from "@/hooks/useLocalMedia";
 import { getAvatarGradient, getMeetingUrl } from "@/lib/utils";
+import { resumeAudio } from "@/lib/sounds";
 
 type LocalMedia = ReturnType<typeof useLocalMedia>;
 
@@ -42,6 +43,7 @@ export function PreJoinLobby({ roomId, media, onJoin }: PreJoinLobbyProps) {
   }, [stream]);
 
   const handleJoin = () => {
+    resumeAudio();
     const name = displayName.trim() || "Guest";
     sessionStorage.setItem("knotcall-display-name", name);
     if (!stream && !isLoading) replaceStreamTracks(new MediaStream());

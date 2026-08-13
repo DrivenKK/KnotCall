@@ -1,5 +1,9 @@
 let audioCtx: AudioContext | null = null;
 
+export function resumeAudio() {
+  getCtx();
+}
+
 function getCtx(): AudioContext | null {
   try {
     if (!audioCtx || audioCtx.state === "closed") {

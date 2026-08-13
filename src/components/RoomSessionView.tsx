@@ -43,6 +43,7 @@ export function RoomSessionView({
   const [unreadChat, setUnreadChat] = useState(0);
   const prevWaitingCount = useRef(0);
   const prevChatLen = useRef(0);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     stream,
@@ -56,6 +57,8 @@ export function RoomSessionView({
     cleanup,
   } = media;
 
+  const prevScreenSharing = useRef(isScreenSharing);
+
   const {
     phase,
     participants,
@@ -65,12 +68,17 @@ export function RoomSessionView({
     isHost,
     connectionError,
     denyReason,
+    removeReason,
     sendChatMessage,
     setParticipantSpeaking,
     replaceOutgoingTracks,
     admitParticipant,
     denyParticipant,
     admitAll,
+    muteParticipant,
+    disableParticipantVideo,
+    muteAllParticipants,
+    ejectParticipant,
     disconnect,
     retryKnock,
   } = session;
@@ -84,14 +92,29 @@ export function RoomSessionView({
   }, [stream]);
 
   const showToast = useCallback((message: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToastMessage(message);
     setToastVisible(true);
-    setTimeout(() => setToastVisible(false), 3000);
+    toastTimerRef.current = setTimeout(() => setToastVisible(false), 3000);
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (prevScreenSharing.current && !isScreenSharing && stream) {
+      replaceOutgoingTracks(stream);
+    }
+    prevScreenSharing.current = isScreenSharing;
+  }, [isScreenSharing, stream, replaceOutgoingTracks]);
+
+  useEffect(() => {
     if (!isHost) return;
-    if (waitingRequests.length > prevWaitingCount.current) {
+    const prev = prevWaitingCount.current;
+    if (waitingRequests.length > prev && prev === 0) {
       playKnockSound();
       setPeopleOpen(true);
       setChatOpen(false);
@@ -109,12 +132,14 @@ export function RoomSessionView({
   }, [participants, phase, isHost]);
 
   useEffect(() => {
-    if (chatMessages.length > prevChatLen.current && !chatOpen) {
-      setUnreadChat((n) => n + (chatMessages.length - prevChatLen.current));
+    const newMessages = chatMessages.slice(prevChatLen.current);
+    const incoming = newMessages.filter((m) => !m.isLocal);
+    if (incoming.length > 0 && !chatOpen) {
+      setUnreadChat((n) => n + incoming.length);
       playChatSound();
     }
     prevChatLen.current = chatMessages.length;
-  }, [chatMessages.length, chatOpen]);
+  }, [chatMessages, chatOpen]);
 
   const handleToggleScreenShare = useCallback(async () => {
     const newStream = await toggleScreenShare();
@@ -158,11 +183,27 @@ export function RoomSessionView({
       onToggleVideo: handleToggleVideo,
       onToggleChat: handleToggleChat,
       onCopyLink: handleCopyLink,
+      onLeave: handleLeave,
     },
     isConnected && phase === "meeting"
   );
 
-  if (phase === "denied") {
+  if (phase === "idle" || phase === "connecting") {
+    return (
+      <div className="dark-gradient flex min-h-screen flex-col items-center justify-center text-white">
+        <Loader2 className="mb-4 h-10 w-10 animate-spin text-meet-accent" />
+        <p className="text-sm text-white/50">Joining meeting…</p>
+      </div>
+    );
+  }
+
+  if (phase === "denied" || phase === "removed") {
+    const title = phase === "removed" ? "Removed from meeting" : "Entry denied";
+    const message =
+      phase === "removed"
+        ? (removeReason ?? "The host removed you from the meeting.")
+        : (denyReason ?? "The host denied your request to join.");
+
     return (
       <div className="dark-gradient flex min-h-screen flex-col text-white">
         <AppHeader
@@ -180,8 +221,8 @@ export function RoomSessionView({
             <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-meet-red/20">
               <ShieldX className="h-8 w-8 text-meet-red" />
             </div>
-            <h1 className="mb-2 text-2xl font-semibold">Entry denied</h1>
-            <p className="mb-6 text-white/55">{denyReason}</p>
+            <h1 className="mb-2 text-2xl font-semibold">{title}</h1>
+            <p className="mb-6 text-white/55">{message}</p>
             <button
               onClick={() => router.push("/")}
               className="inline-flex items-center justify-center gap-2 rounded-full bg-meet-accent px-6 py-3 text-sm font-semibold text-gray-900 transition hover:bg-blue-300"
@@ -340,8 +381,16 @@ export function RoomSessionView({
       </header>
 
       {connectionError && (
-        <div className="mx-4 mt-3 shrink-0 rounded-xl border border-yellow-500/25 bg-yellow-500/10 px-4 py-2.5 text-sm text-yellow-200/90">
-          Connection issue: {connectionError}
+        <div className="mx-4 mt-3 shrink-0 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-yellow-500/25 bg-yellow-500/10 px-4 py-2.5 text-sm text-yellow-200/90">
+          <span>Connection issue: {connectionError}</span>
+          <button
+            type="button"
+            onClick={() => void retryKnock()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-yellow-500/20 px-3 py-1 text-xs font-semibold text-yellow-100 transition hover:bg-yellow-500/30"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Try again
+          </button>
         </div>
       )}
 
@@ -363,25 +412,13 @@ export function RoomSessionView({
 
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-40 pt-4 sm:px-6">
         <div className={`grid flex-1 gap-3 sm:gap-4 ${getGridClass(participantCount)}`}>
-          {participants.length === 0 ? (
-            <div className="col-span-full flex min-h-[55vh] flex-col items-center justify-center gap-4 rounded-3xl border border-dashed border-white/[0.08] bg-meet-surface/30">
-              <div className="relative h-12 w-12">
-                <div className="absolute inset-0 animate-pulse-ring rounded-full bg-meet-accent/15" />
-                <div className="relative flex h-full w-full items-center justify-center">
-                  <div className="h-8 w-8 animate-spin rounded-full border-2 border-meet-accent border-t-transparent" />
-                </div>
-              </div>
-              <p className="text-sm text-white/45">Connecting to the meeting…</p>
-            </div>
-          ) : (
-            participants.map((participant) => (
-              <VideoTile
-                key={participant.peerId}
-                participant={participant}
-                onSpeakingChange={setParticipantSpeaking}
-              />
-            ))
-          )}
+          {participants.map((participant) => (
+            <VideoTile
+              key={participant.peerId || "local"}
+              participant={participant}
+              onSpeakingChange={setParticipantSpeaking}
+            />
+          ))}
         </div>
 
         {remoteCount === 0 && isConnected && isHost && waitingRequests.length === 0 && (
@@ -439,6 +476,22 @@ export function RoomSessionView({
           admitAll();
           playAdmitSound();
           showToast("All participants admitted");
+        }}
+        onMute={(peerId) => {
+          muteParticipant(peerId);
+          showToast("Participant muted");
+        }}
+        onDisableVideo={(peerId) => {
+          disableParticipantVideo(peerId);
+          showToast("Participant video stopped");
+        }}
+        onRemove={(peerId) => {
+          ejectParticipant(peerId);
+          showToast("Participant removed");
+        }}
+        onMuteAll={() => {
+          muteAllParticipants();
+          showToast("All participants muted");
         }}
       />
 

@@ -6,6 +6,7 @@ interface UseLocalMediaOptions {
   videoEnabled?: boolean;
   audioEnabled?: boolean;
   autoStart?: boolean;
+  onScreenShareEnd?: (stream: MediaStream) => void;
 }
 
 export function useLocalMedia(options: UseLocalMediaOptions = {}) {
@@ -13,6 +14,7 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
     videoEnabled: initialVideo = true,
     audioEnabled: initialAudio = true,
     autoStart = true,
+    onScreenShareEnd,
   } = options;
 
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -36,14 +38,25 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
     try {
       stopStream(streamRef.current);
 
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
+      const constraints: MediaStreamConstraints = {
         video: initialVideo
           ? { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
           : false,
         audio: initialAudio
           ? { echoCancellation: true, noiseSuppression: true }
           : false,
-      });
+      };
+
+      let mediaStream: MediaStream;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch {
+        // Fallback for browsers that reject detailed constraints (Safari, some mobile)
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: initialVideo,
+          audio: initialAudio,
+        });
+      }
 
       streamRef.current = mediaStream;
       cameraStreamRef.current = mediaStream;
@@ -97,7 +110,24 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
     setAudioEnabled(next);
   }, [audioEnabled]);
 
+  const forceMute = useCallback(() => {
+    streamRef.current?.getAudioTracks().forEach((track) => {
+      track.enabled = false;
+    });
+    setAudioEnabled(false);
+  }, []);
+
+  const forceDisableVideo = useCallback(() => {
+    streamRef.current?.getVideoTracks().forEach((track) => {
+      track.enabled = false;
+    });
+    setVideoEnabled(false);
+  }, []);
+
   const stopScreenShareRef = useRef<() => void>(() => {});
+
+  const onScreenShareEndRef = useRef(onScreenShareEnd);
+  onScreenShareEndRef.current = onScreenShareEnd;
 
   const stopScreenShare = useCallback(() => {
     stopStream(screenStreamRef.current);
@@ -109,7 +139,9 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
       streamRef.current = cameraStream;
       setStream(cameraStream);
       setVideoEnabled(cameraStream.getVideoTracks().some((t) => t.enabled));
+      onScreenShareEndRef.current?.(cameraStream);
     }
+    return cameraStream;
   }, [stopStream]);
 
   stopScreenShareRef.current = stopScreenShare;
@@ -177,6 +209,8 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
     isLoading,
     toggleVideo,
     toggleAudio,
+    forceMute,
+    forceDisableVideo,
     toggleScreenShare,
     startScreenShare,
     stopScreenShare,

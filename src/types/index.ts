@@ -33,7 +33,13 @@ export type SignalingMessage =
   | { type: "join-request"; id: string; name: string }
   | { type: "join-admitted"; id: string }
   | { type: "join-denied"; id: string; reason?: string }
-  | { type: "host-info"; id: string; name: string };
+  | { type: "host-info"; id: string; name: string }
+  | {
+      type: "host-command";
+      command: "mute" | "video-off" | "remove" | "mute-all";
+      targetId: string;
+      reason?: string;
+    };
 
 export type MeetingPhase = "lobby" | "checking" | "waiting" | "meeting";
 

@@ -1,6 +1,18 @@
 "use client";
 
-import { Check, Crown, Mic, MicOff, User, Video, VideoOff, X } from "lucide-react";
+import {
+  Check,
+  Crown,
+  Mic,
+  MicOff,
+  MoreVertical,
+  User,
+  UserMinus,
+  Video,
+  VideoOff,
+  X,
+} from "lucide-react";
+import { useState } from "react";
 import { getAvatarGradient } from "@/lib/utils";
 import type { Participant, WaitingRequest } from "@/types";
 
@@ -14,9 +26,88 @@ interface ParticipantsPanelProps {
   onAdmit?: (peerId: string) => void;
   onDeny?: (peerId: string) => void;
   onAdmitAll?: () => void;
+  onMute?: (peerId: string) => void;
+  onDisableVideo?: (peerId: string) => void;
+  onRemove?: (peerId: string) => void;
+  onMuteAll?: () => void;
 }
 
-function ParticipantRow({ participant }: { participant: Participant }) {
+function HostActionsMenu({
+  participant,
+  onMute,
+  onDisableVideo,
+  onRemove,
+}: {
+  participant: Participant;
+  onMute: () => void;
+  onDisableVideo: () => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-8 w-8 items-center justify-center rounded-full text-white/45 transition hover:bg-meet-hover hover:text-white"
+        aria-label={`Host controls for ${participant.name}`}
+      >
+        <MoreVertical className="h-4 w-4" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-9 z-20 min-w-[160px] overflow-hidden rounded-xl border border-white/10 bg-meet-surface shadow-xl">
+            <button
+              onClick={() => {
+                onMute();
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-white/80 transition hover:bg-meet-hover"
+            >
+              <MicOff className="h-4 w-4 text-meet-red" />
+              Mute
+            </button>
+            <button
+              onClick={() => {
+                onDisableVideo();
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-white/80 transition hover:bg-meet-hover"
+            >
+              <VideoOff className="h-4 w-4 text-meet-red" />
+              Stop video
+            </button>
+            <button
+              onClick={() => {
+                onRemove();
+                setOpen(false);
+              }}
+              className="flex w-full items-center gap-2 border-t border-white/10 px-3 py-2.5 text-left text-sm text-meet-red transition hover:bg-meet-red/10"
+            >
+              <UserMinus className="h-4 w-4" />
+              Remove
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ParticipantRow({
+  participant,
+  isHostView,
+  onMute,
+  onDisableVideo,
+  onRemove,
+}: {
+  participant: Participant;
+  isHostView?: boolean;
+  onMute?: () => void;
+  onDisableVideo?: () => void;
+  onRemove?: () => void;
+}) {
   const initials = participant.name
     .split(" ")
     .map((part) => part[0])
@@ -25,6 +116,8 @@ function ParticipantRow({ participant }: { participant: Participant }) {
     .toUpperCase();
 
   const gradient = getAvatarGradient(participant.name);
+  const showHostControls =
+    isHostView && !participant.isLocal && !participant.isHost && onMute && onDisableVideo && onRemove;
 
   return (
     <div className="flex items-center gap-3 rounded-2xl border border-white/[0.06] bg-meet-bg/50 px-3 py-3">
@@ -72,6 +165,14 @@ function ParticipantRow({ participant }: { participant: Participant }) {
         >
           {participant.videoEnabled ? <Video className="h-3.5 w-3.5" /> : <VideoOff className="h-3.5 w-3.5" />}
         </span>
+        {showHostControls && (
+          <HostActionsMenu
+            participant={participant}
+            onMute={onMute}
+            onDisableVideo={onDisableVideo}
+            onRemove={onRemove}
+          />
+        )}
       </div>
     </div>
   );
@@ -131,11 +232,16 @@ export function ParticipantsPanel({
   onAdmit,
   onDeny,
   onAdmitAll,
+  onMute,
+  onDisableVideo,
+  onRemove,
+  onMuteAll,
 }: ParticipantsPanelProps) {
   const host = participants.find((p) => p.isHost);
   const others = participants.filter((p) => !p.isHost);
   const inCallCount = participants.length;
   const waitingCount = waitingRequests.length;
+  const remoteInCall = others.filter((p) => !p.isLocal).length;
 
   return (
     <>
@@ -170,6 +276,16 @@ export function ParticipantsPanel({
               <X className="h-5 w-5" />
             </button>
           </div>
+
+          {isHost && remoteInCall > 0 && onMuteAll && (
+            <button
+              onClick={onMuteAll}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-white/10 bg-meet-bg/60 px-3 py-2.5 text-sm font-medium text-white/80 transition hover:bg-meet-hover"
+            >
+              <MicOff className="h-4 w-4 text-meet-red" />
+              Mute all
+            </button>
+          )}
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto p-5">
@@ -206,7 +322,7 @@ export function ParticipantsPanel({
               <h3 className="mb-2.5 text-[11px] font-semibold uppercase tracking-widest text-white/35">
                 Host
               </h3>
-              <ParticipantRow participant={host} />
+              <ParticipantRow participant={host} isHostView={isHost} />
             </section>
           )}
 
@@ -221,7 +337,16 @@ export function ParticipantsPanel({
                 </p>
               ) : (
                 others.map((participant) => (
-                  <ParticipantRow key={participant.peerId} participant={participant} />
+                  <ParticipantRow
+                    key={participant.peerId}
+                    participant={participant}
+                    isHostView={isHost}
+                    onMute={onMute ? () => onMute(participant.peerId) : undefined}
+                    onDisableVideo={
+                      onDisableVideo ? () => onDisableVideo(participant.peerId) : undefined
+                    }
+                    onRemove={onRemove ? () => onRemove(participant.peerId) : undefined}
+                  />
                 ))
               )}
               {others.length === 0 && host && participants.length === 1 && (
@@ -231,6 +356,12 @@ export function ParticipantsPanel({
               )}
             </div>
           </section>
+
+          {isHost && (
+            <p className="text-center text-xs text-white/30">
+              Tap ⋮ on a participant for mute, stop video, or remove.
+            </p>
+          )}
 
           {!isHost && waitingCount === 0 && (
             <p className="text-center text-xs text-white/30">

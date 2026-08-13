@@ -20,7 +20,9 @@ export default function LandingPage() {
 
   const handleStartMeeting = () => {
     setStarting(true);
-    router.push(`/room/${nanoid(10)}`);
+    const roomId = nanoid(10);
+    sessionStorage.setItem(`knotcall-host-${roomId}`, "1");
+    router.push(`/room/${roomId}`);
   };
 
   const handleJoinMeeting = (event: FormEvent) => {

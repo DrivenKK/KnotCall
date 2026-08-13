@@ -5,8 +5,14 @@ import Peer, { DataConnection, MediaConnection } from "peerjs";
 import { nanoid } from "nanoid";
 import type { ChatMessage, Participant, SignalingMessage, WaitingRequest } from "@/types";
 import { generateParticipantId, getParticipantPeerId, getRoomPeerId } from "@/lib/utils";
+import {
+  clearRoomHost,
+  createPeerOptions,
+  destroyPeerSafely,
+  shouldAttemptHost,
+} from "@/lib/peerConfig";
 
-export type SessionPhase = "idle" | "connecting" | "waiting" | "meeting" | "denied";
+export type SessionPhase = "idle" | "connecting" | "waiting" | "meeting" | "denied" | "removed";
 
 interface UseRoomSessionOptions {
   roomId: string;
@@ -15,6 +21,7 @@ interface UseRoomSessionOptions {
   localStream: MediaStream | null;
   videoEnabled: boolean;
   audioEnabled: boolean;
+  onHostCommand?: (command: "mute" | "video-off" | "mute-all") => void;
 }
 
 interface RemotePeerState {
@@ -29,6 +36,8 @@ export function createParticipantId(): string {
   return generateParticipantId();
 }
 
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export function useRoomSession({
   roomId,
   displayName,
@@ -36,6 +45,7 @@ export function useRoomSession({
   localStream,
   videoEnabled,
   audioEnabled,
+  onHostCommand,
 }: UseRoomSessionOptions) {
   const hostPeerId = getRoomPeerId(roomId);
   const guestPeerId = getParticipantPeerId(roomId, participantId);
@@ -48,6 +58,10 @@ export function useRoomSession({
   const [isHost, setIsHost] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [denyReason, setDenyReason] = useState<string | null>(null);
+  const [removeReason, setRemoveReason] = useState<string | null>(null);
+
+  const onHostCommandRef = useRef(onHostCommand);
+  onHostCommandRef.current = onHostCommand;
 
   const peerRef = useRef<Peer | null>(null);
   const myPeerIdRef = useRef("");
@@ -67,6 +81,22 @@ export function useRoomSession({
   const connectDataToPeerRef = useRef<(peerId: string, onOpen?: () => void) => void>(() => {});
   const announceJoinRef = useRef<() => void>(() => {});
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const connectHostPendingRef = useRef(false);
+  const intentionalLeaveRef = useRef(false);
+
+  const resetPeerState = useCallback(() => {
+    callsRef.current.forEach((call) => call.close());
+    callsRef.current.clear();
+    dataConnsRef.current.forEach((conn) => conn.close());
+    dataConnsRef.current.clear();
+    remotePeersRef.current.clear();
+    admittedPeerIdsRef.current.clear();
+    waitingNamesRef.current.clear();
+    hostConnRef.current = null;
+    connectHostPendingRef.current = false;
+    setWaitingRequests([]);
+    setParticipants([]);
+  }, []);
 
   localStreamRef.current = localStream;
   displayNameRef.current = displayName;
@@ -170,11 +200,11 @@ export function useRoomSession({
 
   const setupDataConnection = useCallback((conn: DataConnection) => {
     const existing = dataConnsRef.current.get(conn.peer);
-    if (existing?.open) return;
-    if (existing) {
+    if (existing && existing !== conn) {
       existing.close();
       dataConnsRef.current.delete(conn.peer);
     }
+    if (existing?.open && existing === conn) return;
 
     dataConnsRef.current.set(conn.peer, conn);
 
@@ -296,7 +326,6 @@ export function useRoomSession({
           break;
         }
         case "media-state": {
-          if (!remotePeersRef.current.has(message.id)) return;
           upsertRemotePeer(message.id, {
             videoEnabled: message.video,
             audioEnabled: message.audio,
@@ -325,10 +354,6 @@ export function useRoomSession({
           phaseRef.current = "meeting";
           admittedPeerIdsRef.current.add(myPeerIdRef.current);
           connectToHostRef.current();
-          import("@/lib/sounds").then((m) => m.playJoinSound()).catch(() => {});
-          setTimeout(() => {
-            if (!remotePeersRef.current.has(hostPeerId)) connectToHostRef.current();
-          }, 800);
           break;
         }
         case "join-denied": {
@@ -336,6 +361,27 @@ export function useRoomSession({
           setDenyReason(message.reason ?? "The host denied your request to join.");
           setPhase("denied");
           phaseRef.current = "denied";
+          break;
+        }
+        case "host-command": {
+          if (message.command === "mute-all") {
+            if (message.targetId !== myPeerIdRef.current) break;
+            onHostCommandRef.current?.("mute-all");
+            break;
+          }
+          if (message.targetId !== myPeerIdRef.current) break;
+          if (message.command === "remove") {
+            setRemoveReason(message.reason ?? "The host removed you from the meeting.");
+            setPhase("removed");
+            phaseRef.current = "removed";
+            if (retryTimerRef.current) clearInterval(retryTimerRef.current);
+            callsRef.current.forEach((call) => call.close());
+            dataConnsRef.current.forEach((conn) => conn.close());
+            void destroyPeerSafely(peerRef.current);
+            peerRef.current = null;
+            break;
+          }
+          onHostCommandRef.current?.(message.command);
           break;
         }
         case "peer-joined":
@@ -365,7 +411,7 @@ export function useRoomSession({
         }
       }
     },
-    [handlePeerJoined, hostPeerId, syncParticipants, upsertRemotePeer]
+    [handlePeerJoined, syncParticipants, upsertRemotePeer]
   );
 
   handleSignalingMessageRef.current = handleSignalingMessage;
@@ -383,6 +429,7 @@ export function useRoomSession({
 
       const stream = localStreamRef.current ?? new MediaStream();
       call.answer(stream);
+      callsRef.current.set(call.peer, call);
 
       const peerName =
         waitingNamesRef.current.get(call.peer) ??
@@ -390,7 +437,6 @@ export function useRoomSession({
 
       call.on("stream", (remoteStream) => {
         upsertRemotePeer(call.peer, { stream: remoteStream, name: peerName });
-        callsRef.current.set(call.peer, call);
         syncParticipants();
       });
 
@@ -419,8 +465,17 @@ export function useRoomSession({
   announceJoinRef.current = announceJoin;
 
   const connectToHost = useCallback(() => {
+    const existing = dataConnsRef.current.get(hostPeerId);
+    if (existing?.open) {
+      announceJoinRef.current();
+      return;
+    }
+    if (connectHostPendingRef.current) return;
+    connectHostPendingRef.current = true;
+
     callPeerRef.current(hostPeerId);
     connectDataToPeerRef.current(hostPeerId, () => {
+      connectHostPendingRef.current = false;
       announceJoinRef.current();
     });
   }, [hostPeerId]);
@@ -478,79 +533,157 @@ export function useRoomSession({
 
       peer.on("connection", setupDataConnection);
       peer.on("call", answerCall);
+      peer.on("disconnected", () => {
+        if (phaseRef.current === "waiting" || phaseRef.current === "meeting") {
+          setConnectionError("Lost connection to the meeting server. Tap Try again.");
+          setIsConnected(false);
+        }
+      });
       peer.on("error", (err) => {
-        if (err.type !== "unavailable-id") setConnectionError(err.message);
+        if (err.type === "unavailable-id") return;
+        setConnectionError(err.message || "Could not connect to the meeting.");
       });
     },
     [answerCall, sendJoinRequest, setupDataConnection]
   );
 
-  const join = useCallback((name?: string) => {
-    if (phaseRef.current !== "idle") return;
-    if (name) displayNameRef.current = name;
+  const createGuestPeer = useCallback(async () => {
+    await destroyPeerSafely(peerRef.current);
+    peerRef.current = null;
+    hostConnRef.current = null;
 
-    // Show meeting UI immediately — no blocking "checking host" screen
-    myPeerIdRef.current = hostPeerId;
-    isHostRef.current = true;
-    setIsHost(true);
-    setPhase("meeting");
-    phaseRef.current = "meeting";
+    myPeerIdRef.current = guestPeerId;
+    isHostRef.current = false;
+    setIsHost(false);
+    setPhase("waiting");
+    phaseRef.current = "waiting";
     syncParticipants();
 
-    let settled = false;
+    const guestPeer = new Peer(guestPeerId, createPeerOptions());
+    peerRef.current = guestPeer;
+    startGuestPeer(guestPeer);
+  }, [guestPeerId, startGuestPeer, syncParticipants]);
 
-    const becomeGuest = () => {
-      if (settled) return;
-      settled = true;
+  const reconnectGuest = useCallback(async () => {
+    if (retryTimerRef.current) clearInterval(retryTimerRef.current);
+    setConnectionError(null);
+    setDenyReason(null);
+    resetPeerState();
+    await createGuestPeer();
+  }, [createGuestPeer, resetPeerState]);
 
-      peerRef.current?.destroy();
-      peerRef.current = null;
+  const claimHostPeer = useCallback(async (): Promise<boolean> => {
+    await destroyPeerSafely(peerRef.current);
+    peerRef.current = null;
 
-      myPeerIdRef.current = guestPeerId;
-      isHostRef.current = false;
-      setIsHost(false);
-      setPhase("waiting");
-      phaseRef.current = "waiting";
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (success: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (!success) {
+          void destroyPeerSafely(peerRef.current);
+          peerRef.current = null;
+        }
+        resolve(success);
+      };
 
-      const guestPeer = new Peer(guestPeerId, { debug: 0 });
-      peerRef.current = guestPeer;
-      startGuestPeer(guestPeer);
-    };
+      myPeerIdRef.current = hostPeerId;
+      const hostPeer = new Peer(hostPeerId, createPeerOptions());
+      peerRef.current = hostPeer;
 
-    const hostPeer = new Peer(hostPeerId, { debug: 0 });
-    peerRef.current = hostPeer;
+      hostPeer.on("open", () => {
+        isHostRef.current = true;
+        setIsHost(true);
+        setIsConnected(true);
+        setConnectionError(null);
+        setPhase("meeting");
+        phaseRef.current = "meeting";
+        syncParticipants();
+        finish(true);
+      });
 
-    hostPeer.on("open", () => {
-      if (settled) return;
-      settled = true;
-      setIsConnected(true);
-      setConnectionError(null);
-      isHostRef.current = true;
-      setIsHost(true);
-      syncParticipants();
+      hostPeer.on("connection", setupDataConnection);
+      hostPeer.on("call", answerCall);
+      hostPeer.on("disconnected", () => {
+        if (phaseRef.current === "meeting") {
+          setConnectionError("Lost connection to the meeting server. Tap Try again.");
+          setIsConnected(false);
+        }
+      });
+      hostPeer.on("error", (err) => {
+        if (settled) {
+          if (err.type !== "unavailable-id") {
+            setConnectionError(err.message || "Could not connect to the meeting.");
+          }
+          return;
+        }
+        if (err.type === "unavailable-id") finish(false);
+        else {
+          setConnectionError(err.message || "Could not connect to the meeting.");
+          finish(false);
+        }
+      });
     });
+  }, [answerCall, hostPeerId, setupDataConnection, syncParticipants]);
 
-    hostPeer.on("connection", setupDataConnection);
-    hostPeer.on("call", answerCall);
+  const reconnectHost = useCallback(async () => {
+    if (retryTimerRef.current) clearInterval(retryTimerRef.current);
+    setConnectionError(null);
+    resetPeerState();
+    setPhase("connecting");
+    phaseRef.current = "connecting";
 
-    hostPeer.on("error", (err) => {
-      if (settled) return;
-      if (err.type === "unavailable-id") {
-        becomeGuest();
-      } else {
-        setConnectionError(err.message);
-        becomeGuest();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (await claimHostPeer()) return;
+      await sleep(1000 * (attempt + 1));
+    }
+
+    setConnectionError("Could not reclaim host connection. Try leaving and rejoining.");
+  }, [claimHostPeer, resetPeerState]);
+
+  const retryConnection = useCallback(async () => {
+    if (isHostRef.current || shouldAttemptHost(roomId)) {
+      await reconnectHost();
+    } else {
+      await reconnectGuest();
+    }
+  }, [reconnectGuest, reconnectHost, roomId]);
+
+  const join = useCallback(
+    async (name?: string) => {
+      if (phaseRef.current !== "idle" && peerRef.current) return;
+      if (name) displayNameRef.current = name;
+
+      intentionalLeaveRef.current = false;
+      const attemptHost = shouldAttemptHost(roomId);
+
+      if (!attemptHost) {
+        setPhase("connecting");
+        phaseRef.current = "connecting";
+        await createGuestPeer();
+        return;
       }
-    });
-  }, [guestPeerId, hostPeerId, answerCall, setupDataConnection, startGuestPeer, syncParticipants]);
+
+      setPhase("connecting");
+      phaseRef.current = "connecting";
+      myPeerIdRef.current = hostPeerId;
+      syncParticipants();
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (await claimHostPeer()) return;
+        await sleep(1000 * (attempt + 1));
+      }
+
+      clearRoomHost(roomId);
+      await createGuestPeer();
+    },
+    [roomId, hostPeerId, claimHostPeer, createGuestPeer, syncParticipants]
+  );
 
   useEffect(() => {
-    const calls = callsRef.current;
-    const dataConns = dataConnsRef.current;
-    const remotePeers = remotePeersRef.current;
-
-    return () => {
-      if (retryTimerRef.current) clearInterval(retryTimerRef.current);
+    const handlePageHide = () => {
+      if (intentionalLeaveRef.current || !peerRef.current) return;
 
       const leaveMessage: SignalingMessage = {
         type: "peer-left",
@@ -558,15 +691,11 @@ export function useRoomSession({
       };
       broadcastToAll(leaveMessage);
       sendToHost(leaveMessage);
-
-      calls.forEach((call) => call.close());
-      calls.clear();
-      dataConns.forEach((conn) => conn.close());
-      dataConns.clear();
-      remotePeers.clear();
       peerRef.current?.destroy();
-      peerRef.current = null;
     };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
   }, [broadcastToAll, sendToHost]);
 
   useEffect(() => {
@@ -639,6 +768,77 @@ export function useRoomSession({
     waitingRequests.forEach((request) => admitParticipant(request.id));
   }, [admitParticipant, waitingRequests]);
 
+  const ejectParticipant = useCallback(
+    (peerId: string) => {
+      if (!isHostRef.current || peerId === myPeerIdRef.current || peerId === hostPeerId) return;
+
+      sendToPeer(peerId, {
+        type: "host-command",
+        command: "remove",
+        targetId: peerId,
+        reason: "The host removed you from the meeting.",
+      });
+
+      callsRef.current.get(peerId)?.close();
+      callsRef.current.delete(peerId);
+      dataConnsRef.current.get(peerId)?.close();
+      dataConnsRef.current.delete(peerId);
+      remotePeersRef.current.delete(peerId);
+      admittedPeerIdsRef.current.delete(peerId);
+      waitingNamesRef.current.delete(peerId);
+      setWaitingRequests((prev) => prev.filter((r) => r.id !== peerId));
+
+      broadcastToAll({ type: "peer-left", id: peerId });
+      syncParticipants();
+    },
+    [broadcastToAll, hostPeerId, sendToPeer, syncParticipants]
+  );
+
+  const sendHostCommand = useCallback(
+    (peerId: string, command: "mute" | "video-off") => {
+      if (!isHostRef.current || peerId === myPeerIdRef.current) return;
+
+      sendToPeer(peerId, {
+        type: "host-command",
+        command,
+        targetId: peerId,
+      });
+
+      if (command === "mute") {
+        upsertRemotePeer(peerId, { audioEnabled: false });
+      } else {
+        upsertRemotePeer(peerId, { videoEnabled: false });
+      }
+      syncParticipants();
+    },
+    [sendToPeer, syncParticipants, upsertRemotePeer]
+  );
+
+  const muteParticipant = useCallback(
+    (peerId: string) => sendHostCommand(peerId, "mute"),
+    [sendHostCommand]
+  );
+
+  const disableParticipantVideo = useCallback(
+    (peerId: string) => sendHostCommand(peerId, "video-off"),
+    [sendHostCommand]
+  );
+
+  const muteAllParticipants = useCallback(() => {
+    if (!isHostRef.current) return;
+
+    remotePeersRef.current.forEach((_, peerId) => {
+      if (peerId === hostPeerId) return;
+      sendToPeer(peerId, {
+        type: "host-command",
+        command: "mute-all",
+        targetId: peerId,
+      });
+      upsertRemotePeer(peerId, { audioEnabled: false });
+    });
+    syncParticipants();
+  }, [hostPeerId, sendToPeer, syncParticipants, upsertRemotePeer]);
+
   const sendChatMessage = useCallback(
     (text: string) => {
       const trimmed = text.trim();
@@ -704,6 +904,7 @@ export function useRoomSession({
   );
 
   const disconnect = useCallback(() => {
+    intentionalLeaveRef.current = true;
     if (retryTimerRef.current) clearInterval(retryTimerRef.current);
 
     const leaveMessage: SignalingMessage = {
@@ -713,13 +914,14 @@ export function useRoomSession({
     broadcastToAll(leaveMessage);
     sendToHost(leaveMessage);
 
-    callsRef.current.forEach((call) => call.close());
-    dataConnsRef.current.forEach((conn) => conn.close());
-    peerRef.current?.destroy();
+    resetPeerState();
+    void destroyPeerSafely(peerRef.current);
     peerRef.current = null;
     phaseRef.current = "idle";
     setPhase("idle");
-  }, [broadcastToAll, sendToHost]);
+    setIsConnected(false);
+    clearRoomHost(roomId);
+  }, [broadcastToAll, resetPeerState, roomId, sendToHost]);
 
   return {
     phase,
@@ -731,13 +933,18 @@ export function useRoomSession({
     isHost,
     connectionError,
     denyReason,
+    removeReason,
     sendChatMessage,
     setParticipantSpeaking,
     replaceOutgoingTracks,
     admitParticipant,
     denyParticipant,
     admitAll,
+    muteParticipant,
+    disableParticipantVideo,
+    muteAllParticipants,
+    ejectParticipant,
     disconnect,
-    retryKnock: sendJoinRequest,
+    retryKnock: retryConnection,
   };
 }
