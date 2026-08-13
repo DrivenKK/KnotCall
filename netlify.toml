@@ -1,0 +1,14 @@
+[build]
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# WebRTC needs camera/mic over HTTPS (Netlify provides TLS automatically).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Permissions-Policy = "camera=*, microphone=*, display-capture=*"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
