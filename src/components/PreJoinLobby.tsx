@@ -7,6 +7,7 @@ import { AppHeader } from "@/components/ui/AppHeader";
 import type { useLocalMedia } from "@/hooks/useLocalMedia";
 import { getAvatarGradient, getMeetingUrl } from "@/lib/utils";
 import { resumeAudio } from "@/lib/sounds";
+import { getBrowserInfo, supportsWebRTC } from "@/lib/browserSupport";
 
 type LocalMedia = ReturnType<typeof useLocalMedia>;
 
@@ -20,6 +21,8 @@ export function PreJoinLobby({ roomId, media, onJoin }: PreJoinLobbyProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [displayName, setDisplayName] = useState("");
   const [copied, setCopied] = useState(false);
+  const [browserTip, setBrowserTip] = useState<string | null>(null);
+  const [webrtcOk, setWebrtcOk] = useState(true);
   const router = useRouter();
 
   const {
@@ -36,6 +39,13 @@ export function PreJoinLobby({ roomId, media, onJoin }: PreJoinLobbyProps) {
   useEffect(() => {
     const saved = sessionStorage.getItem("knotcall-display-name");
     if (saved) setDisplayName(saved);
+  }, []);
+
+  useEffect(() => {
+    setWebrtcOk(supportsWebRTC());
+    void getBrowserInfo().then((info) => {
+      if (info.tips[0]) setBrowserTip(info.tips[0]);
+    });
   }, []);
 
   useEffect(() => {
@@ -167,6 +177,18 @@ export function PreJoinLobby({ roomId, media, onJoin }: PreJoinLobbyProps) {
                     </button>
                   </div>
                 </div>
+
+                {!webrtcOk && (
+                  <div className="rounded-xl border border-yellow-500/30 bg-yellow-500/10 px-4 py-3 text-sm text-yellow-200">
+                    WebRTC is not available. Use Chrome, Brave, Opera, Edge, Firefox, or Safari.
+                  </div>
+                )}
+
+                {browserTip && (
+                  <div className="rounded-xl border border-meet-accent/25 bg-meet-accent/10 px-4 py-3 text-xs leading-relaxed text-meet-accent/90">
+                    {browserTip}
+                  </div>
+                )}
 
                 {error && (
                   <div className="rounded-xl border border-meet-red/30 bg-meet-red/10 px-4 py-3 text-sm text-red-300">

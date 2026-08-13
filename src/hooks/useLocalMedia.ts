@@ -1,5 +1,11 @@
 "use client";
 
+import {
+  ensureMediaDevices,
+  getDisplayMediaWithFallback,
+  getUserMediaWithFallbacks,
+} from "@/lib/browserSupport";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 
 interface UseLocalMediaOptions {
@@ -37,26 +43,9 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
 
     try {
       stopStream(streamRef.current);
+      ensureMediaDevices();
 
-      const constraints: MediaStreamConstraints = {
-        video: initialVideo
-          ? { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } }
-          : false,
-        audio: initialAudio
-          ? { echoCancellation: true, noiseSuppression: true }
-          : false,
-      };
-
-      let mediaStream: MediaStream;
-      try {
-        mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch {
-        // Fallback for browsers that reject detailed constraints (Safari, some mobile)
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: initialVideo,
-          audio: initialAudio,
-        });
-      }
+      const mediaStream = await getUserMediaWithFallbacks(initialVideo, initialAudio);
 
       streamRef.current = mediaStream;
       cameraStreamRef.current = mediaStream;
@@ -148,10 +137,7 @@ export function useLocalMedia(options: UseLocalMediaOptions = {}) {
 
   const startScreenShare = useCallback(async (): Promise<MediaStream | null> => {
     try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: true,
-      });
+      const displayStream = await getDisplayMediaWithFallback();
 
       screenStreamRef.current = displayStream;
       setIsScreenSharing(true);

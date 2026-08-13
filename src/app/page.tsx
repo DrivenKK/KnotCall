@@ -10,7 +10,7 @@ const includes = [
   "Host-controlled waiting room",
   "Screen sharing and in-call chat",
   "Peer-to-peer video — nothing stored on a server",
-  "Works in Chrome, Firefox, Safari, Edge",
+  "Works in Chrome, Brave, Opera, Edge, Firefox, Safari, and other Chromium browsers",
 ];
 
 export default function LandingPage() {
