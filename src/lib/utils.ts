@@ -20,9 +20,12 @@ export function generateParticipantId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
+import { getSiteUrl } from "@/lib/site";
+
 export function getMeetingUrl(roomId: string): string {
-  if (typeof window === "undefined") return `/room/${roomId}`;
-  return `${window.location.origin}/room/${roomId}`;
+  const base = getSiteUrl();
+  if (base) return `${base}/room/${roomId}`;
+  return `/room/${roomId}`;
 }
 
 export function getGridClass(count: number): string {

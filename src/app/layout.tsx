@@ -8,7 +8,10 @@ const inter = Inter({
   display: "swap",
 });
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+
 export const metadata: Metadata = {
+  ...(siteUrl ? { metadataBase: new URL(siteUrl) } : {}),
   title: {
     default: "KnotCall — Free Video Meetings",
     template: "%s · KnotCall",
@@ -25,6 +28,7 @@ export const metadata: Metadata = {
     description: "Instant peer-to-peer video meetings. No signup required.",
     type: "website",
     siteName: "KnotCall",
+    ...(siteUrl ? { url: siteUrl } : {}),
   },
   twitter: {
     card: "summary_large_image",

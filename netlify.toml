@@ -4,7 +4,10 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# WebRTC needs camera/mic over HTTPS (Netlify provides TLS automatically).
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Required for WebRTC (camera, mic, screen share) over HTTPS.
 [[headers]]
   for = "/*"
   [headers.values]
