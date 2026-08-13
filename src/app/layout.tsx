@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     template: "%s · KnotCall",
   },
   description:
-    "Start free peer-to-peer video meetings instantly. No signup, no API keys, no server costs. Waiting room, screen share, and chat included.",
+    "Free peer-to-peer video meetings in your browser. Waiting room, host controls, screen share, and chat. Works in Chrome, Brave, Opera, Edge, Firefox, and Safari.",
   icons: {
     icon: "/favicon.svg",
   },
@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   authors: [{ name: "KnotCall" }],
   openGraph: {
     title: "KnotCall — Free Video Meetings",
-    description: "Instant peer-to-peer video meetings. No signup required.",
+    description: "Instant peer-to-peer video meetings with waiting room and host controls.",
     type: "website",
     siteName: "KnotCall",
     ...(siteUrl ? { url: siteUrl } : {}),
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "KnotCall — Free Video Meetings",
-    description: "Instant peer-to-peer video meetings. No signup required.",
+    description: "Instant peer-to-peer video meetings with waiting room and host controls.",
   },
   robots: { index: true, follow: true },
 };

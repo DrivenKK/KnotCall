@@ -6,9 +6,10 @@ Free, peer-to-peer video meetings in the browser. No signup, no API keys, no bac
 
 - Instant meeting rooms with shareable links
 - Host waiting room (admit / deny guests)
+- Host controls — mute, stop video, remove participants, mute all
 - HD video & audio via WebRTC mesh (PeerJS)
 - Screen sharing, in-call chat, active speaker highlight
-- Works on desktop and mobile browsers
+- Works in Chrome, Brave, Opera, Edge, Firefox, Safari, and Chromium browsers
 
 ## Quick start
 
