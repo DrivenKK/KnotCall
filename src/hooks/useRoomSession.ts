@@ -83,6 +83,7 @@ export function useRoomSession({
   const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const connectHostPendingRef = useRef(false);
   const intentionalLeaveRef = useRef(false);
+  const joinLockRef = useRef(false);
 
   const resetPeerState = useCallback(() => {
     callsRef.current.forEach((call) => call.close());
@@ -514,7 +515,17 @@ export function useRoomSession({
 
   const startGuestPeer = useCallback(
     (peer: Peer) => {
+      const connectTimeout = setTimeout(() => {
+        if (phaseRef.current === "waiting" && !peer.open) {
+          setConnectionError(
+            "Could not reach the meeting server. Check your connection and tap Try again."
+          );
+          setIsConnected(false);
+        }
+      }, 12000);
+
       peer.on("open", () => {
+        clearTimeout(connectTimeout);
         setIsConnected(true);
         setConnectionError(null);
         setPhase("waiting");
@@ -540,6 +551,7 @@ export function useRoomSession({
         }
       });
       peer.on("error", (err) => {
+        clearTimeout(connectTimeout);
         if (err.type === "unavailable-id") return;
         setConnectionError(err.message || "Could not connect to the meeting.");
       });
@@ -581,12 +593,15 @@ export function useRoomSession({
       const finish = (success: boolean) => {
         if (settled) return;
         settled = true;
+        clearTimeout(timeout);
         if (!success) {
           void destroyPeerSafely(peerRef.current);
           peerRef.current = null;
         }
         resolve(success);
       };
+
+      const timeout = setTimeout(() => finish(false), 8000);
 
       myPeerIdRef.current = hostPeerId;
       const hostPeer = new Peer(hostPeerId, createPeerOptions());
@@ -627,59 +642,71 @@ export function useRoomSession({
     });
   }, [answerCall, hostPeerId, setupDataConnection, syncParticipants]);
 
-  const reconnectHost = useCallback(async () => {
-    if (retryTimerRef.current) clearInterval(retryTimerRef.current);
-    setConnectionError(null);
-    resetPeerState();
-    setPhase("connecting");
-    phaseRef.current = "connecting";
-
-    for (let attempt = 0; attempt < 5; attempt++) {
-      if (await claimHostPeer()) return;
-      await sleep(1000 * (attempt + 1));
-    }
-
-    setConnectionError("Could not reclaim host connection. Try leaving and rejoining.");
-  }, [claimHostPeer, resetPeerState]);
-
-  const retryConnection = useCallback(async () => {
-    if (isHostRef.current || shouldAttemptHost(roomId)) {
-      await reconnectHost();
-    } else {
-      await reconnectGuest();
-    }
-  }, [reconnectGuest, reconnectHost, roomId]);
-
   const join = useCallback(
     async (name?: string) => {
+      if (joinLockRef.current) return;
       if (phaseRef.current !== "idle" && peerRef.current) return;
+
+      joinLockRef.current = true;
       if (name) displayNameRef.current = name;
 
       intentionalLeaveRef.current = false;
       const attemptHost = shouldAttemptHost(roomId);
 
-      if (!attemptHost) {
-        setPhase("connecting");
-        phaseRef.current = "connecting";
+      try {
+        if (!attemptHost) {
+          myPeerIdRef.current = guestPeerId;
+          isHostRef.current = false;
+          setIsHost(false);
+          setPhase("waiting");
+          phaseRef.current = "waiting";
+          syncParticipants();
+          await createGuestPeer();
+          return;
+        }
+
+        // Host: show meeting UI immediately, claim peer ID in background
+        myPeerIdRef.current = hostPeerId;
+        isHostRef.current = true;
+        setIsHost(true);
+        setIsConnected(false);
+        setPhase("meeting");
+        phaseRef.current = "meeting";
+        syncParticipants();
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (await claimHostPeer()) return;
+          await sleep(600 * (attempt + 1));
+        }
+
+        clearRoomHost(roomId);
+        isHostRef.current = false;
+        setIsHost(false);
         await createGuestPeer();
-        return;
+      } catch {
+        setConnectionError("Failed to join. Tap Try again.");
+        phaseRef.current = "idle";
+        setPhase("idle");
+        joinLockRef.current = false;
       }
-
-      setPhase("connecting");
-      phaseRef.current = "connecting";
-      myPeerIdRef.current = hostPeerId;
-      syncParticipants();
-
-      for (let attempt = 0; attempt < 5; attempt++) {
-        if (await claimHostPeer()) return;
-        await sleep(1000 * (attempt + 1));
-      }
-
-      clearRoomHost(roomId);
-      await createGuestPeer();
     },
-    [roomId, hostPeerId, claimHostPeer, createGuestPeer, syncParticipants]
+    [roomId, hostPeerId, guestPeerId, claimHostPeer, createGuestPeer, syncParticipants]
   );
+
+  const retryConnection = useCallback(async () => {
+    joinLockRef.current = false;
+    phaseRef.current = "idle";
+    setPhase("idle");
+    resetPeerState();
+    void destroyPeerSafely(peerRef.current);
+    peerRef.current = null;
+
+    if (shouldAttemptHost(roomId)) {
+      await join(displayNameRef.current);
+    } else {
+      await reconnectGuest();
+    }
+  }, [join, reconnectGuest, resetPeerState, roomId]);
 
   useEffect(() => {
     const handlePageHide = () => {
@@ -920,6 +947,7 @@ export function useRoomSession({
     phaseRef.current = "idle";
     setPhase("idle");
     setIsConnected(false);
+    joinLockRef.current = false;
     clearRoomHost(roomId);
   }, [broadcastToAll, resetPeerState, roomId, sendToHost]);
 

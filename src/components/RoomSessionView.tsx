@@ -190,9 +190,29 @@ export function RoomSessionView({
 
   if (phase === "idle" || phase === "connecting") {
     return (
-      <div className="dark-gradient flex min-h-screen flex-col items-center justify-center text-white">
+      <div className="dark-gradient flex min-h-screen flex-col items-center justify-center px-4 text-white">
         <Loader2 className="mb-4 h-10 w-10 animate-spin text-meet-accent" />
-        <p className="text-sm text-white/50">Joining meeting…</p>
+        <p className="mb-2 text-sm text-white/50">Joining meeting…</p>
+        {connectionError && (
+          <p className="mb-4 max-w-sm text-center text-sm text-yellow-200/90">{connectionError}</p>
+        )}
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => void retryKnock()}
+            className="inline-flex items-center gap-2 rounded-xl bg-meet-accent px-5 py-2.5 text-sm font-semibold text-gray-900"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Try again
+          </button>
+          <button
+            type="button"
+            onClick={handleLeave}
+            className="rounded-xl border border-white/10 px-5 py-2.5 text-sm text-white/70 hover:bg-meet-hover"
+          >
+            Leave
+          </button>
+        </div>
       </div>
     );
   }

@@ -29,6 +29,10 @@ export function createPeerOptions() {
   return {
     debug: 0,
     config: PEER_ICE_CONFIG,
+    host: "0.peerjs.com",
+    port: 443,
+    path: "/",
+    secure: true,
   } as const;
 }
 

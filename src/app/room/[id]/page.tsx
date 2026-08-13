@@ -18,15 +18,13 @@ export default function RoomPage({ params }: RoomPageProps) {
   const media = useLocalMedia({ autoStart: true });
   const mediaRef = useRef(media);
   mediaRef.current = media;
+  const joinCalledRef = useRef(false);
 
   const onHostCommand = useCallback((command: "mute" | "video-off" | "mute-all") => {
     if (command === "mute" || command === "mute-all") {
       mediaRef.current.forceMute();
     } else if (command === "video-off") {
       mediaRef.current.forceDisableVideo();
-    }
-    if (mediaRef.current.streamRef.current) {
-      // Outgoing tracks sync happens via useRoomSession localStream effect
     }
   }, []);
 
@@ -40,10 +38,14 @@ export default function RoomPage({ params }: RoomPageProps) {
     onHostCommand,
   });
 
+  const joinRef = useRef(session.join);
+  joinRef.current = session.join;
+
   useEffect(() => {
-    if (!joined || !displayName) return;
-    void session.join(displayName);
-  }, [joined, displayName, session.join]);
+    if (!joined || !displayName.trim() || joinCalledRef.current) return;
+    joinCalledRef.current = true;
+    void joinRef.current(displayName.trim());
+  }, [joined, displayName]);
 
   if (!joined) {
     return (
