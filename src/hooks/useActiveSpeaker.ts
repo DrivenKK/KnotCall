@@ -35,7 +35,7 @@ export function useActiveSpeaker(
 
         analyser = audioContext.createAnalyser();
         analyser.fftSize = 512;
-        analyser.smoothingTimeConstant = 0.8;
+          analyser.smoothingTimeConstant = 0.8;
         source = audioContext.createMediaStreamSource(stream);
         source.connect(analyser);
 

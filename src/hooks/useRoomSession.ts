@@ -546,14 +546,14 @@ export function useRoomSession({
       peer.on("call", answerCall);
       peer.on("disconnected", () => {
         if (phaseRef.current === "waiting" || phaseRef.current === "meeting") {
-          setConnectionError("Lost connection to the meeting server. Tap Try again.");
+          setConnectionError("You have lost connection to the meeting server. Please try again.");
           setIsConnected(false);
         }
       });
       peer.on("error", (err) => {
         clearTimeout(connectTimeout);
         if (err.type === "unavailable-id") return;
-        setConnectionError(err.message || "Could not connect to the meeting.");
+        setConnectionError(err.message || "Couldn't connect to the meeting.");
       });
     },
     [answerCall, sendJoinRequest, setupDataConnection]
